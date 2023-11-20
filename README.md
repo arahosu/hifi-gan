@@ -1,6 +1,5 @@
 # Hifi-GAN
-An 48kHz implementation of HiFi-GAN for Voice Conversion.
-
+A PyTorch implementation of HiFi-GAN vocoder for music.
 
 # Example
 
