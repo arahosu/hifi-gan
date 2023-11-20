@@ -19,8 +19,9 @@ if __name__ == "__main__":
         for i, audio_path in enumerate(tqdm.tqdm(audio_files)):
             audio = sf.SoundFile(audio_path)
             sec = audio.frames / audio.samplerate
-            if audio.frames / audio.samplerate * target_sr < 16384 * 1.2:
-                continue
+
+            # if audio.frames / audio.samplerate * target_sr < 16384 * 1.2:
+            #     continue
             # if sec > 30:
             #     continue
             audio_path = audio_path.replace("\\", "/")

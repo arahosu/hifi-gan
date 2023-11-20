@@ -29,6 +29,8 @@ flags.DEFINE_string('savedir', None,
                     'directory for saving the generated spectrograms')
 
 # MIDI variables
+flags.DEFINE_boolean('apply_augmentation', False,
+                     'whether to apply data augmentation')
 flags.DEFINE_integer('min_note', 36,
                      'lowest pitched note in the dataset')
 flags.DEFINE_integer('max_note', 96,
@@ -71,7 +73,6 @@ class JazzNetSpecDatasetGenerator(object):
                  min_note: int,
                  max_note: int,
                  apply_augmentation: bool,
-                 train_val_split_ratio: list[float] = [0.8, 0.2],
                  zero_pad_length: int = 4000,
                  resample_rate: int = 16000,
                  n_fft: int = 1024,
@@ -98,15 +99,10 @@ class JazzNetSpecDatasetGenerator(object):
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        # Define properties for chords in the training and test sets
-        self.train_note_counts = [2, 3]
-        self.test_note_counts = [4]
-
+        # Define properties for chords in the dataset
         self.min_note = min_note
         self.max_note = max_note
-
         self.apply_augmentation = apply_augmentation
-        self.train_val_split_ratio = train_val_split_ratio
 
         # audio properties
         self.zero_pad_length = zero_pad_length
@@ -127,8 +123,7 @@ class JazzNetSpecDatasetGenerator(object):
         # load all midi files from root
         all_midi_files = glob.glob(os.path.join(root, '**/*.mid'))
         self.all_midi_streams = []
-        train_chords = []
-        self.test_chords = []
+        self.chords = []
 
         for i, midi_file in enumerate(all_midi_files):
             stream = open_midi(midi_file)
@@ -136,49 +131,30 @@ class JazzNetSpecDatasetGenerator(object):
 
             chord = extract_notes(stream)
 
-            if len(chord) in self.train_note_counts:
-                if self.apply_augmentation:
-                    variations = self._randomly_add_octaves(chord)
-                    for chord_variation in variations:
-                        if min(chord_variation) >= self.min_note and max(chord_variation) <= self.max_note:
-                            train_chords.append(chorale_list_to_tensor([chord_variation]).numpy())
-                else:
-                    if min(chord) >= self.min_note and max(chord) <= self.max_note:
-                        train_chords.append(chorale_list_to_tensor([chord]).numpy())
-            elif len(chord) in self.test_note_counts:
+            if self.apply_augmentation:
+                variations = self._randomly_add_octaves(chord)
+                for chord_variation in variations:
+                    if min(chord_variation) >= self.min_note and max(chord_variation) <= self.max_note:
+                        self.chords.append(chorale_list_to_tensor([chord_variation]).numpy())
+            else:
                 if min(chord) >= self.min_note and max(chord) <= self.max_note:
-                    self.test_chords.append(chorale_list_to_tensor([chord]).numpy())
+                    self.chords.append(chorale_list_to_tensor([chord]).numpy())
 
             if i % 500 == 0:
                 print('{} out of {} chords processed'.format(
                     i+1, len(all_midi_files)))
 
-        # shuffle the chords in the training-validation split
-        train_chords = np.array(train_chords)
-        train_chords = np.unique(train_chords, axis=0)
-        np.random.shuffle(train_chords)
-
-        self.train_chords = train_chords[
-            :int(len(train_chords) * np.cumsum(self.train_val_split_ratio)[0])].squeeze()
-        self.val_chords = train_chords[
-            int(len(train_chords) * np.cumsum(self.train_val_split_ratio)[0]):].squeeze()
-        self.test_chords = np.array(self.test_chords).squeeze()
-
-        self.train_chords = torch.from_numpy(np.unique(self.train_chords, axis=0))
-        self.val_chords = torch.from_numpy(np.unique(self.val_chords, axis=0))
-        self.test_chords = torch.from_numpy(np.unique(self.test_chords, axis=0))
-
-        print(self.train_chords.shape, self.val_chords.shape, self.test_chords.shape)
+        # shuffle the chords
+        self.chords = np.array(self.chords)
+        self.chords = torch.from_numpy(self.chords).unique(dim=0).squeeze()
 
         # print the summary of dataset stats
-        print('\nNumber of training chords: {}'.format(len(self.train_chords)))
-        print('Number of validation chords: {}'.format(len(self.val_chords)))
-        print('Number of test chords: {}'.format(len(self.test_chords)))
+        print('Number of chords: {}'.format(len(self.chords)))
 
         self.all_notes = torch.from_numpy(
-            np.unique(np.hstack(np.array(train_chords))))
+            np.unique(np.hstack(np.array(self.chords))))
 
-    def _randomly_add_octaves(self, chord, max_octaves=5):
+    def _randomly_add_octaves(self, chord, max_octaves=3):
         all_notes = []
 
         for i in range(max_octaves):
@@ -263,22 +239,11 @@ class JazzNetSpecDatasetGenerator(object):
 
     def generate(self,
                  savedir,
-                 split,
                  start=0,
                  end=None,
-                 sample_mode='mix',
-                 chord_list=None):
+                 sample_mode='mix'):
 
-        # Get the number of examples in the split
-        if split == 'train':
-            examples = self.train_chords
-        elif split == 'valid':
-            examples = self.val_chords
-        elif split == 'test':
-            examples = self.test_chords
-        else:
-            assert chord_list is not None
-            examples = chord_list
+        examples = self.chords
 
         num_examples = 0
         instrument_order_list = []
@@ -316,14 +281,17 @@ class JazzNetSpecDatasetGenerator(object):
 
         if not os.path.exists(savedir):
             os.makedirs(savedir)
-
+        
         for i in range(start, end):
             example = chord_list[i].squeeze()
             instrument_order = instrument_order_list[i]
             inst_names = [self.loader.get_all_instrument_names()[i].replace(" ", "") for i in instrument_order]
 
+            audio_filename = 'audio-{i:0{width}}-of-{num_examples:0{width}}.wav'.format(
+                i=i+1, width=len(str(num_examples)), num_examples=num_examples)
             spec_filename = 'mel_spec-{i:0{width}}-of-{num_examples:0{width}}.pt'.format(
                 i=i+1, width=len(str(num_examples)), num_examples=num_examples)
+            
 
             if self.debug:
                 print(example)
@@ -358,38 +326,45 @@ class JazzNetSpecDatasetGenerator(object):
             if self.debug:
                 print(example_spec.shape)
 
-            out_path = os.path.join(savedir, split)
+            if not os.path.exists(savedir):
+                os.makedirs(savedir)
 
-            if not os.path.exists(out_path):
-                os.makedirs(out_path)
+            if not os.path.exists(os.path.join(savedir, 'specs')):
+                os.makedirs(os.path.join(savedir, 'specs'))
+            
+            if not os.path.exists(os.path.join(savedir, 'audio')):
+                os.makedirs(os.path.join(savedir, 'audio'))
 
-            # Save the spectrogram tensors of chord and notes
+            # Save the audio waveform tensors of chord
+            torchaudio.save(os.path.join(savedir, 'audio', audio_filename),
+                            example_audio_tensor.cpu(), sample_rate=self.resample_rate)
+
+            # Save the spectrogram tensors of chord
             torch.save(example_spec.cpu(), os.path.join(
-                out_path, spec_filename))
+                savedir, 'specs', spec_filename))
 
             # print the progress
             if i % 1000 == 0:
                 print('{} out of {} samples saved to {}'.format(
-                    i+1, num_examples, out_path
+                    i+1, num_examples, savedir
                 ))
                 print('Time elapsed: {}'.format(time.time() - st))
 
         # save the list of MIDI tokens for the chords in the dataset
         torch.save(torch.cat((chord_list), dim=0), os.path.join(
-            savedir, split, split+'_examples.pt'))
+            savedir, 'examples.pt'))
 
         # save the list of instrument orders for the dataset
-        np.save(os.path.join(savedir, split, split+'_instrument_order.npy'),
+        np.save(os.path.join(savedir, 'instrument_order.npy'),
                 np.array(instrument_order_list))
 
         # get the list of unique notes in the dataset
-        notes = self.train_chords.unique()
+        notes = self.chords.unique()
         note_list = notes[notes.nonzero(as_tuple=True)].tolist()
 
         # save the meta-data in a dictionary
         metadata = {
             'note_list': note_list,
-            'split_ratio': self.train_val_split_ratio,
             'zero_pad_length': self.zero_pad_length,
             'resample_rate': self.resample_rate,
             'n_fft': self.n_fft,
@@ -411,12 +386,12 @@ def main(argv):
                                      bpm=FLAGS.bpm,
                                      min_note=FLAGS.min_note,
                                      max_note=FLAGS.max_note,
-                                     apply_augmentation=False,
-                                     zero_pad_length=FLAGS.zero_pad_length,
+                                     apply_augmentation=FLAGS.apply_augmentation,
+                                     zero_pad_length=FLAGS.zero_pad_len,
                                      resample_rate=FLAGS.resample_rate,
                                      n_fft=FLAGS.n_fft,
-                                     win_length=FLAGS.win_length,
-                                     hop_length=FLAGS.hop_length,
+                                     win_length=FLAGS.win_len,
+                                     hop_length=FLAGS.hop_len,
                                      n_mels=FLAGS.n_mels,
                                      seed=FLAGS.seed,
                                      instrument_tokens=FLAGS.instrument_tokens,
@@ -429,9 +404,7 @@ def main(argv):
     ds.precompute(FLAGS.savedir)
     
     # Create dataset splits
-    ds.generate(FLAGS.savedir, 'train')
-    ds.generate(FLAGS.savedir, 'valid')
-    ds.generate(FLAGS.savedir, 'test')
+    ds.generate(FLAGS.savedir)
 
 if __name__ == '__main__':
     app.run(main)

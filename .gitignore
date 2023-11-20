@@ -132,3 +132,9 @@ dmypy.json
 /logs*/
 *.wav
 *.pt
+
+# ignore dataset files 
+data/
+dataset/
+*.wav
+*.pt
