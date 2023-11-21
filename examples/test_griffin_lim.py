@@ -30,18 +30,17 @@ class AudioPipeline(torch.nn.Module):
         return mel
 
 # Load audio
-wav, sr = torchaudio.load("zszy_48k.wav")
-assert sr == 48000
+wav, sr = torchaudio.load("dataset/16k/audio/audio-00010-of-96093.wav")
 
-audio_pipeline = AudioPipeline(freq=48000,
-                                n_fft=2048,
+audio_pipeline = AudioPipeline(freq=sr,
+                                n_fft=1024,
                                 n_mel=128,
-                                win_length=2048,
+                                win_length=1024,
                                 hop_length=512)
 
 mel = audio_pipeline(wav)
 
 import librosa
 import scipy
-audio = librosa.feature.inverse.mel_to_audio(mel.detach().cpu().numpy(), sr=sr, n_fft=2048, hop_length=512, win_length=2048, center=False)
+audio = librosa.feature.inverse.mel_to_audio(mel.detach().cpu().numpy(), sr=sr, n_fft=1024, hop_length=512, win_length=1024, center=False)
 torchaudio.save("test_out2.wav", torch.tensor(audio), sr)
