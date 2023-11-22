@@ -1,10 +1,10 @@
-# Create a folder to store the datasets
+# Create a folder to store the files
 mkdir ./data
 
 # Download Bach Chorales dataset 
 git clone https://github.com/czhuang/JSB-Chorales-dataset
 
-# Move Bach Chorales dataset to the folder that stores the datasets
+# Move Bach Chorales dataset to the folder that stores the files
 mv JSB-Chorales-dataset data
 
 # Download MIDI data for JazzNet dataset 
